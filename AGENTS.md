@@ -1,106 +1,74 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+OpenCode用プラグイン。Claude 4.6モデルで廃止された assistant message prefill に起因する `400 Bad Request` エラーを、メッセージ配列の変形で回避する。
+
+OpenCodeのバグにより会話配列の末尾にassistantメッセージが残るケースがあり（空phantomメッセージ、タイミング問題、クロックスキュー等）、Claude 4.6 APIがこれを拒否する。本プラグインは `experimental.chat.messages.transform` フックで送信前にメッセージ配列を修正する。
+
+## Commands
+
+```bash
+bun install          # 依存関係インストール
+bun run lint         # Biome による lint/format チェック
+bun test             # テスト実行
+bun test --watch     # テストウォッチモード
+```
+
+## Architecture
+
+- **エントリポイント**: `src/index.ts` — `Plugin` 型をエクスポート。`@opencode-ai/plugin` の `Hooks` インターフェースに登録するフック関数を返す
+- **使用フック**: `experimental.chat.messages.transform` — LLM送信前のメッセージ配列全体を変形可能
+- **設計書**: `REPORT.md` に根本原因分析、変形ロジック、型定義、パターン一覧が詳述されている。実装時は必ず参照すること
+
+### 変形ロジック概要
+
+1. 末尾メッセージが `role === "assistant"` でなければ何もしない
+2. 末尾から連続する空assistantメッセージを削除（空 = コンテンツ保持パートが0個）
+3. 削除後もまだ末尾がassistantなら、合成 `"Continue."` userメッセージを追加
+
+### パート分類の注意点
+
+- **ReasoningPart**: `text.length > 0` または `metadata` にsignatureキーがあれば「コンテンツ保持」。署名付きthinkingブロックは削除不可
+- **ToolPart / FilePart**: 常にコンテンツ保持
+- **StepStartPart / StepFinishPart / SnapshotPart 等**: 構造のみ（コンテンツなし）
+
+## Bun Runtime
 
 Default to using Bun instead of Node.js.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
 - Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
+- Use `bun install` instead of `npm install`
+- Use `bunx <package>` instead of `npx <package>`
+- Bun automatically loads .env, so don't use dotenv
 
-## APIs
+### Bun APIs
 
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
+- `Bun.serve()` for HTTP/WebSocket (not express)
+- `bun:sqlite` for SQLite (not better-sqlite3)
+- `Bun.file` over `node:fs` readFile/writeFile
+- `Bun.$\`cmd\`` instead of execa
 
-## Testing
+### Testing
 
-Use `bun test` to run tests.
-
-```ts#index.test.ts
+```ts
 import { test, expect } from "bun:test";
-
-test("hello world", () => {
-  expect(1).toBe(1);
-});
 ```
 
-## Frontend
+## Code Style
 
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+Biome (biome.json) enforces:
+- インデント: スペース
+- クォート: ダブルクォート
+- セミコロン: 不要な場合省略 (`asNeeded`)
+- トレイリングカンマ: ES5準拠
+- import整理: 自動
 
-Server:
+## TypeScript
 
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+- `strict: true`, `noUncheckedIndexedAccess: true`, `verbatimModuleSyntax: true`
+- ターゲット: ESNext, モジュール: Preserve
+- 型のみのインポートには `import type` を使用すること（verbatimModuleSyntax要件）
