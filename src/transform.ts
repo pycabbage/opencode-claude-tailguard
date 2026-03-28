@@ -5,7 +5,7 @@ export type MessageEntry = { info: Message; parts: Part[] }
 
 // Matches Claude 4.6 variants where prefill is not supported
 // Handles separators: -, ., _ between major.minor version
-const TARGET_PATTERN = /claude-(opus|sonnet|haiku)-4[._-]6/
+const TARGET_PATTERN = /claude-(opus|sonnet)-4[._-]6/
 
 export function isTargetModel(modelID: string): boolean {
   return TARGET_PATTERN.test(modelID)
