@@ -27,7 +27,19 @@ jobs:
       - run: |
           mkdir -p $HOME/.local/share/opencode
           bun test
+      - run: |
+          # 1.2.3, 1.2.3-alpha.0, ...
+          VERSION=$(jq -r '.version' package.json)
+          # alpha, beta, latest, ...
+          TAG=$(echo "$VERSION" | grep -oE 'alpha|beta' || echo "latest")
+          npm publish --tag $TAG
+
       - uses: actions/setup-node@v6
         with:
           node-version: "latest"
-      - run: npm publish
+      - run: |
+          # 1.2.3, 1.2.3-alpha.0, ...
+          VERSION=$(jq -r '.version' package.json)
+          # alpha, beta, latest, ...
+          TAG=$(echo "$VERSION" | grep -oE 'alpha|beta' || echo "latest")
+          npm publish --tag=$TAG
