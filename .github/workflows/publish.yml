@@ -27,19 +27,23 @@ jobs:
       - run: |
           mkdir -p $HOME/.local/share/opencode
           bun test
-      - run: |
+      - id: publish
+        continue-on-error: true
+        run: |
           # 1.2.3, 1.2.3-alpha.0, ...
           VERSION=$(jq -r '.version' package.json)
           # alpha, beta, latest, ...
           TAG=$(echo "$VERSION" | grep -oE 'alpha|beta' || echo "latest")
-          npm publish --tag $TAG
+          bun publish --tag $TAG  --access public
 
       - uses: actions/setup-node@v6
+        if: steps.publish.outcome == 'failure'
         with:
           node-version: "latest"
-      - run: |
+      - if: steps.publish.outcome == 'failure'
+        run: |
           # 1.2.3, 1.2.3-alpha.0, ...
           VERSION=$(jq -r '.version' package.json)
           # alpha, beta, latest, ...
           TAG=$(echo "$VERSION" | grep -oE 'alpha|beta' || echo "latest")
-          npm publish --tag=$TAG
+          npm publish --tag=$TAG --access public
