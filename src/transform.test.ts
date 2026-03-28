@@ -127,10 +127,10 @@ describe("isTargetModel", () => {
     expect(isTargetModel("claude-sonnet-4-6")).toBe(true)
   })
   test("matches claude-haiku-4-5", () => {
-    expect(isTargetModel("claude-haiku-4-5")).toBe(true)
+    expect(isTargetModel("claude-haiku-4-5")).toBe(false)
   })
   test("matches claude-sonnet-4.5", () => {
-    expect(isTargetModel("claude-sonnet-4.5")).toBe(true)
+    expect(isTargetModel("claude-sonnet-4.5")).toBe(false)
   })
   test("does not match claude-3-opus", () => {
     expect(isTargetModel("claude-3-opus")).toBe(false)

@@ -1,4 +1,4 @@
-import { createWriteStream } from "fs";
+import { createWriteStream } from "fs"
 import { homedir } from "os"
 import { join } from "path"
 import { stdout } from "process"
@@ -29,10 +29,10 @@ function createLogger(options?: Partial<LoggerOptions>) {
 
   return {
     log(...args: unknown[]) {
-      const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`
+      const line = `[${new Date().toISOString()}] ${args.join(" ")}\n`
       if (combinedOptions.stderr) stdout.write(line)
       if (stream) stream.write(line)
-    }
+    },
   }
 }
 
