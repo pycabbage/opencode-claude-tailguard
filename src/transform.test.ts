@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import type { Message, Part } from "@opencode-ai/sdk"
 import type { MessageEntry } from "./transform"
-import { hasContent, isTargetModel, transformMessages } from "./transform"
+import {
+  getMode,
+  hasContent,
+  isTargetModel,
+  transformMessages,
+} from "./transform"
 
 const SESSION_ID = "test-session"
 const AGENT = "test-agent"
@@ -114,6 +119,25 @@ function makeStepFinishPart(): Part {
   } as unknown as Part
 }
 
+// ─── getMode ────────────────────────────────────────────────────────────────
+
+describe("getMode", () => {
+  test("defaults to removal when env var is unset", () => {
+    delete process.env.OPENCODE_CLAUDE_TAILGUARD_MODE
+    expect(getMode()).toBe("removal")
+  })
+  test("returns transform when env var is 'transform'", () => {
+    process.env.OPENCODE_CLAUDE_TAILGUARD_MODE = "transform"
+    expect(getMode()).toBe("transform")
+    delete process.env.OPENCODE_CLAUDE_TAILGUARD_MODE
+  })
+  test("returns removal for unknown value", () => {
+    process.env.OPENCODE_CLAUDE_TAILGUARD_MODE = "invalid"
+    expect(getMode()).toBe("removal")
+    delete process.env.OPENCODE_CLAUDE_TAILGUARD_MODE
+  })
+})
+
 // ─── isTargetModel ─────────────────────────────────────────────────────────
 
 describe("isTargetModel", () => {
@@ -217,7 +241,7 @@ describe("transformMessages", () => {
         makeReasoningPart("thinking"),
       ]),
     ]
-    transformMessages(messages)
+    transformMessages(messages, "transform")
     expect(messages).toHaveLength(3)
     expect(messages[2]?.info.role).toBe("user")
     expect(messages[2]?.parts[0]).toMatchObject({
@@ -236,7 +260,7 @@ describe("transformMessages", () => {
       ]),
       makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
     ]
-    transformMessages(messages)
+    transformMessages(messages, "transform")
     expect(messages).toHaveLength(3)
     expect(messages[1]?.parts).toHaveLength(2)
     expect(messages[2]?.info.role).toBe("user")
@@ -275,7 +299,7 @@ describe("transformMessages", () => {
       makeUserEntry(),
       makeAssistantEntry([makeReasoningPart("", { signature: "abc123" })]),
     ]
-    transformMessages(messages)
+    transformMessages(messages, "transform")
     expect(messages).toHaveLength(3)
     expect(messages[1]?.info.role).toBe("assistant")
     expect(messages[2]?.info.role).toBe("user")
@@ -291,7 +315,7 @@ describe("transformMessages", () => {
       makeUserEntry(),
       makeAssistantEntry([makeToolPart(), makeReasoningPart("thinking")]),
     ]
-    transformMessages(messages)
+    transformMessages(messages, "transform")
     expect(messages).toHaveLength(3)
     expect(messages[2]?.info.role).toBe("user")
     expect(messages[2]?.parts[0]).toMatchObject({
@@ -304,14 +328,14 @@ describe("transformMessages", () => {
     const assistant = makeAssistantEntry([makeTextPart("hello")])
     const messages = [makeUserEntry(), assistant]
     const assistantSessionID = assistant.info.sessionID
-    transformMessages(messages)
+    transformMessages(messages, "transform")
     expect(messages[2]?.info.sessionID).toBe(assistantSessionID)
   })
 
   test("synthetic message agent and model come from latest user message", () => {
     const user = makeUserEntry("claude-sonnet-4-6")
     const messages = [user, makeAssistantEntry([makeTextPart("hello")])]
-    transformMessages(messages)
+    transformMessages(messages, "transform")
     const synthetic = messages[2]?.info as {
       agent: string
       model: { modelID: string }
@@ -325,10 +349,62 @@ describe("transformMessages", () => {
       makeUserEntry(),
       makeAssistantEntry([makeTextPart("hello")]),
     ]
-    transformMessages(messages)
+    transformMessages(messages, "transform")
     expect(messages).toHaveLength(3)
     const syntheticMsg = messages[2] as MessageEntry
     const syntheticPart = syntheticMsg.parts[0] as { messageID: string }
     expect(syntheticPart.messageID).toBe(syntheticMsg.info.id)
+  })
+})
+
+// ─── transformMessages (removal mode) ───────────────────────────────────────
+
+describe("transformMessages (removal mode - default)", () => {
+  test("content-bearing assistant → removed", () => {
+    const messages = [
+      makeUserEntry(),
+      makeAssistantEntry([makeTextPart("hello")]),
+    ]
+    transformMessages(messages)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
+  })
+
+  test("empty assistant → removed", () => {
+    const messages = [
+      makeUserEntry(),
+      makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
+    ]
+    transformMessages(messages)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
+  })
+
+  test("content-bearing and empty assistants → all removed", () => {
+    const messages = [
+      makeUserEntry(),
+      makeAssistantEntry([makeTextPart("hello")]),
+      makeAssistantEntry([makeStepStartPart()]),
+    ]
+    transformMessages(messages)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
+  })
+
+  test("assistant with signed reasoning → removed", () => {
+    const messages = [
+      makeUserEntry(),
+      makeAssistantEntry([makeReasoningPart("", { signature: "abc123" })]),
+    ]
+    transformMessages(messages)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
+  })
+
+  test("assistant with tool part → removed", () => {
+    const messages = [makeUserEntry(), makeAssistantEntry([makeToolPart()])]
+    transformMessages(messages)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
   })
 })
