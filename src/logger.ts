@@ -28,7 +28,8 @@ async function createStream(path: string) {
       await mkdir(dirPath, { recursive: true })
     }
     return createWriteStream(path, { flush: true })
-  } finally {}
+  } finally {
+  }
 }
 
 export async function createLogger(
