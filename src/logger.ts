@@ -21,6 +21,16 @@ interface LoggerOptions {
   logfile: string
 }
 
+async function createStream(path: string) {
+  try {
+    const dirPath = dirname(path)
+    if (!(await lstat(dirPath)).isDirectory()) {
+      await mkdir(dirPath, { recursive: true })
+    }
+    return createWriteStream(path, { flush: true })
+  } finally {}
+}
+
 export async function createLogger(
   options?: Partial<LoggerOptions>
 ): Promise<Logger> {
@@ -30,13 +40,8 @@ export async function createLogger(
     ...options,
   }
 
-  const logDir = dirname(combinedOptions.logfile)
-  if (!(await lstat(logDir)).isDirectory()) {
-    await mkdir(logDir, { recursive: true })
-  }
-
   const stream = combinedOptions.logfile
-    ? createWriteStream(combinedOptions.logfile, { flush: true })
+    ? await createStream(combinedOptions.logfile)
     : null
 
   return {
