@@ -1,6 +1,7 @@
 {
   "name": "opencode-claude-tailguard",
-  "version": "0.0.1",
+  "version": "0.0.2",
+  "description": "Fix assistant message prefill error for Claude",
   "keywords": [
     "opencode",
     "plugin"
