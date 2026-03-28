@@ -21,5 +21,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun lint
       - run: bun tsc
-      - run: bun test
+      - run: |
+          mkdir -p $HOME/.local/share/opencode
+          bun test
       - run: bun publish
