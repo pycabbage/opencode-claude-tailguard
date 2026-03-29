@@ -85,19 +85,20 @@ function createSyntheticUserMessage(
   return { info, parts: [part] }
 }
 
-// Transforms the message array in-place to ensure it ends with a user message
-// when targeting Claude 4.6 models.
+// Returns a new MessageEntry[] array with trailing assistant messages removed or
+// neutralized to ensure it ends with a user message when targeting Claude 4.6 models.
+// The input array is never mutated.
 //
 // removal mode (default):
-//   Pop ALL consecutive assistant messages from the tail.
+//   Remove ALL consecutive assistant messages from the tail.
 //
 // transform mode:
-//   1. Pop consecutive empty assistant messages from tail
+//   1. Remove consecutive empty assistant messages from tail
 //   2. If tail is still assistant (has content), append synthetic "Continue." user message
 export function transformMessages(
   messages: MessageEntry[],
   mode: Mode = getMode()
-): void {
+): MessageEntry[] {
   logger.log(
     "transform called:",
     messages.length,
@@ -108,27 +109,29 @@ export function transformMessages(
   const last = messages[messages.length - 1]
   if (!last || last.info.role !== "assistant") {
     logger.log("skip: last message is not assistant")
-    return
+    return messages
   }
 
   const latestUser = findLatestUserMessage(messages)
   if (!latestUser) {
     logger.log("skip: no user message found")
-    return
+    return messages
   }
   if (!isTargetModel(latestUser.info.model.modelID)) {
     logger.log("skip: non-target model:", latestUser.info.model.modelID)
-    return
+    return messages
   }
 
   logger.log("target model:", latestUser.info.model.modelID)
 
+  let result = messages
+
   if (mode === "removal") {
     let removed = 0
-    while (messages.length > 0) {
-      const tail = messages[messages.length - 1]
+    while (result.length > 0) {
+      const tail = result[result.length - 1]
       if (!tail || !isAssistantMessage(tail)) break
-      messages.pop()
+      result = result.slice(0, -1)
       removed++
     }
     if (removed > 0) {
@@ -136,10 +139,10 @@ export function transformMessages(
     }
   } else {
     let removed = 0
-    while (messages.length > 0) {
-      const tail = messages[messages.length - 1]
+    while (result.length > 0) {
+      const tail = result[result.length - 1]
       if (!tail || !isEmptyAssistantMessage(tail)) break
-      messages.pop()
+      result = result.slice(0, -1)
       removed++
     }
 
@@ -147,20 +150,22 @@ export function transformMessages(
       logger.log("removed", removed, "empty assistant message(s)")
     }
 
-    const newLast = messages[messages.length - 1]
+    const newLast = result[result.length - 1]
     if (newLast && newLast.info.role === "assistant") {
       logger.log("appending synthetic 'Continue.' user message")
-      messages.push(
+      result = [
+        ...result,
         createSyntheticUserMessage(
           newLast.info.sessionID,
           latestUser.info.agent,
           latestUser.info.model
-        )
-      )
+        ),
+      ]
     } else if (removed > 0) {
       logger.log("no synthetic message needed: empty assistant(s) removed")
     }
   }
 
-  logger.log("transform complete:", messages.length, "messages")
+  logger.log("transform complete:", result.length, "messages")
+  return result
 }

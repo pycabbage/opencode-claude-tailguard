@@ -42,10 +42,13 @@ Target models: `/claude-(opus|sonnet)-4[._-]6/` — Claude 4.6 Opus and Sonnet o
 | `transform` | Remove empty trailing assistants; append synthetic `"Continue."` if content-bearing assistant remains |
 
 **`transformMessages(messages, mode)` algorithm:**
-1. No-op if last message is not `role === "assistant"`
-2. No-op if latest user message is not a target model
-3. `removal`: pop all trailing assistant messages (content-bearing or empty)
-   `transform`: pop empty trailing assistants; if still ends with assistant, push synthetic user message
+
+Returns a new `MessageEntry[]` array; input array is never mutated.
+
+1. No-op if last message is not `role === "assistant"` (returns same reference)
+2. No-op if latest user message is not a target model (returns same reference)
+3. `removal`: slice off all trailing assistant messages (content-bearing or empty)
+   `transform`: slice off empty trailing assistants; if still ends with assistant, spread a synthetic user message onto the result
 
 **Part content classification (`hasContent`):**
 

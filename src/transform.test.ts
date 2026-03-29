@@ -206,15 +206,16 @@ describe("hasContent", () => {
 describe("transformMessages", () => {
   test("empty array: no-op", () => {
     const messages: MessageEntry[] = []
-    transformMessages(messages)
-    expect(messages).toHaveLength(0)
+    const result = transformMessages(messages)
+    expect(result).toBe(messages)
+    expect(result).toHaveLength(0)
   })
 
   test("last message is user: no-op", () => {
     const messages = [makeUserEntry()]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]?.info.role).toBe("user")
+    const result = transformMessages(messages)
+    expect(result).toBe(messages)
+    expect(result[0]?.info.role).toBe("user")
   })
 
   test("non-target model: no-op", () => {
@@ -222,14 +223,15 @@ describe("transformMessages", () => {
       makeUserEntry("gpt-4o"),
       makeAssistantEntry([makeTextPart("hello")]),
     ]
-    transformMessages(messages)
-    expect(messages).toHaveLength(2)
+    const result = transformMessages(messages)
+    expect(result).toBe(messages)
+    expect(result).toHaveLength(2)
   })
 
   test("no user message at all: no-op", () => {
     const messages = [makeAssistantEntry([makeTextPart("hello")])]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
+    const result = transformMessages(messages)
+    expect(result).toBe(messages)
   })
 
   // Pattern 1: [U, A(text+thinking)] → [U, A(text+thinking), U("Continue.")]
@@ -241,13 +243,16 @@ describe("transformMessages", () => {
         makeReasoningPart("thinking"),
       ]),
     ]
-    transformMessages(messages, "transform")
-    expect(messages).toHaveLength(3)
-    expect(messages[2]?.info.role).toBe("user")
-    expect(messages[2]?.parts[0]).toMatchObject({
+    const result = transformMessages(messages, "transform")
+    expect(result).toHaveLength(3)
+    expect(result[2]?.info.role).toBe("user")
+    expect(result[2]?.parts[0]).toMatchObject({
       type: "text",
       text: "Continue.",
     })
+    // Input array is not mutated
+    expect(messages).toHaveLength(2)
+    expect(result).not.toBe(messages)
   })
 
   // Pattern 2: [U, A(text+thinking), A(empty)] → [U, A(text+thinking), U("Continue.")]
@@ -260,14 +265,17 @@ describe("transformMessages", () => {
       ]),
       makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
     ]
-    transformMessages(messages, "transform")
-    expect(messages).toHaveLength(3)
-    expect(messages[1]?.parts).toHaveLength(2)
-    expect(messages[2]?.info.role).toBe("user")
-    expect(messages[2]?.parts[0]).toMatchObject({
+    const result = transformMessages(messages, "transform")
+    expect(result).toHaveLength(3)
+    expect(result[1]?.parts).toHaveLength(2)
+    expect(result[2]?.info.role).toBe("user")
+    expect(result[2]?.parts[0]).toMatchObject({
       type: "text",
       text: "Continue.",
     })
+    // Input array is not mutated
+    expect(messages).toHaveLength(3)
+    expect(result).not.toBe(messages)
   })
 
   // Pattern 3: [U, A(empty)] → [U]
@@ -276,9 +284,12 @@ describe("transformMessages", () => {
       makeUserEntry(),
       makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
     ]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]?.info.role).toBe("user")
+    const result = transformMessages(messages)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.info.role).toBe("user")
+    // Input array is not mutated
+    expect(messages).toHaveLength(2)
+    expect(result).not.toBe(messages)
   })
 
   // Pattern 4: [U, A(empty), A(empty)] → [U]
@@ -288,9 +299,12 @@ describe("transformMessages", () => {
       makeAssistantEntry([makeStepStartPart()]),
       makeAssistantEntry([makeStepFinishPart()]),
     ]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]?.info.role).toBe("user")
+    const result = transformMessages(messages)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.info.role).toBe("user")
+    // Input array is not mutated
+    expect(messages).toHaveLength(3)
+    expect(result).not.toBe(messages)
   })
 
   // Pattern 5: [U, A(reasoning with signature, text="")] → [U, A, U("Continue.")]
@@ -299,14 +313,17 @@ describe("transformMessages", () => {
       makeUserEntry(),
       makeAssistantEntry([makeReasoningPart("", { signature: "abc123" })]),
     ]
-    transformMessages(messages, "transform")
-    expect(messages).toHaveLength(3)
-    expect(messages[1]?.info.role).toBe("assistant")
-    expect(messages[2]?.info.role).toBe("user")
-    expect(messages[2]?.parts[0]).toMatchObject({
+    const result = transformMessages(messages, "transform")
+    expect(result).toHaveLength(3)
+    expect(result[1]?.info.role).toBe("assistant")
+    expect(result[2]?.info.role).toBe("user")
+    expect(result[2]?.parts[0]).toMatchObject({
       type: "text",
       text: "Continue.",
     })
+    // Input array is not mutated
+    expect(messages).toHaveLength(2)
+    expect(result).not.toBe(messages)
   })
 
   // Pattern 6: [U, A(tool+thinking)] → [U, A(tool+thinking), U("Continue.")]
@@ -315,28 +332,31 @@ describe("transformMessages", () => {
       makeUserEntry(),
       makeAssistantEntry([makeToolPart(), makeReasoningPart("thinking")]),
     ]
-    transformMessages(messages, "transform")
-    expect(messages).toHaveLength(3)
-    expect(messages[2]?.info.role).toBe("user")
-    expect(messages[2]?.parts[0]).toMatchObject({
+    const result = transformMessages(messages, "transform")
+    expect(result).toHaveLength(3)
+    expect(result[2]?.info.role).toBe("user")
+    expect(result[2]?.parts[0]).toMatchObject({
       type: "text",
       text: "Continue.",
     })
+    // Input array is not mutated
+    expect(messages).toHaveLength(2)
+    expect(result).not.toBe(messages)
   })
 
   test("synthetic message sessionID matches last assistant", () => {
     const assistant = makeAssistantEntry([makeTextPart("hello")])
     const messages = [makeUserEntry(), assistant]
     const assistantSessionID = assistant.info.sessionID
-    transformMessages(messages, "transform")
-    expect(messages[2]?.info.sessionID).toBe(assistantSessionID)
+    const result = transformMessages(messages, "transform")
+    expect(result[2]?.info.sessionID).toBe(assistantSessionID)
   })
 
   test("synthetic message agent and model come from latest user message", () => {
     const user = makeUserEntry("claude-sonnet-4-6")
     const messages = [user, makeAssistantEntry([makeTextPart("hello")])]
-    transformMessages(messages, "transform")
-    const synthetic = messages[2]?.info as {
+    const result = transformMessages(messages, "transform")
+    const synthetic = result[2]?.info as {
       agent: string
       model: { modelID: string }
     }
@@ -349,9 +369,9 @@ describe("transformMessages", () => {
       makeUserEntry(),
       makeAssistantEntry([makeTextPart("hello")]),
     ]
-    transformMessages(messages, "transform")
-    expect(messages).toHaveLength(3)
-    const syntheticMsg = messages[2] as MessageEntry
+    const result = transformMessages(messages, "transform")
+    expect(result).toHaveLength(3)
+    const syntheticMsg = result[2] as MessageEntry
     const syntheticPart = syntheticMsg.parts[0] as { messageID: string }
     expect(syntheticPart.messageID).toBe(syntheticMsg.info.id)
   })
@@ -365,9 +385,12 @@ describe("transformMessages (removal mode - default)", () => {
       makeUserEntry(),
       makeAssistantEntry([makeTextPart("hello")]),
     ]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]?.info.role).toBe("user")
+    const result = transformMessages(messages)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.info.role).toBe("user")
+    // Input array is not mutated
+    expect(messages).toHaveLength(2)
+    expect(result).not.toBe(messages)
   })
 
   test("empty assistant → removed", () => {
@@ -375,9 +398,12 @@ describe("transformMessages (removal mode - default)", () => {
       makeUserEntry(),
       makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
     ]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]?.info.role).toBe("user")
+    const result = transformMessages(messages)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.info.role).toBe("user")
+    // Input array is not mutated
+    expect(messages).toHaveLength(2)
+    expect(result).not.toBe(messages)
   })
 
   test("content-bearing and empty assistants → all removed", () => {
@@ -386,9 +412,12 @@ describe("transformMessages (removal mode - default)", () => {
       makeAssistantEntry([makeTextPart("hello")]),
       makeAssistantEntry([makeStepStartPart()]),
     ]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]?.info.role).toBe("user")
+    const result = transformMessages(messages)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.info.role).toBe("user")
+    // Input array is not mutated
+    expect(messages).toHaveLength(3)
+    expect(result).not.toBe(messages)
   })
 
   test("assistant with signed reasoning → removed", () => {
@@ -396,15 +425,21 @@ describe("transformMessages (removal mode - default)", () => {
       makeUserEntry(),
       makeAssistantEntry([makeReasoningPart("", { signature: "abc123" })]),
     ]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]?.info.role).toBe("user")
+    const result = transformMessages(messages)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.info.role).toBe("user")
+    // Input array is not mutated
+    expect(messages).toHaveLength(2)
+    expect(result).not.toBe(messages)
   })
 
   test("assistant with tool part → removed", () => {
     const messages = [makeUserEntry(), makeAssistantEntry([makeToolPart()])]
-    transformMessages(messages)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]?.info.role).toBe("user")
+    const result = transformMessages(messages)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.info.role).toBe("user")
+    // Input array is not mutated
+    expect(messages).toHaveLength(2)
+    expect(result).not.toBe(messages)
   })
 })
