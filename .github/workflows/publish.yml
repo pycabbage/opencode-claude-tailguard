@@ -37,3 +37,5 @@ jobs:
           # alpha, beta, latest, ...
           TAG=$(echo "$VERSION" | grep -oE 'alpha|beta' || echo "latest")
           npm publish --tag=$TAG --access public
+      - name: Release
+        uses: softprops/action-gh-release@v3
