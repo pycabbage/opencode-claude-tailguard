@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin"
+import { logger } from "./logger"
 import { transformMessages } from "./transform"
-import { logger } from "./logger";
 
 export const ClaudeTailguardPlugin: Plugin = async () => {
   logger.log("ClaudeTailguardPlugin initialized")
