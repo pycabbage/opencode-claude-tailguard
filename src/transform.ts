@@ -15,7 +15,7 @@ export function getMode(): Mode {
 export function isTargetModel(modelID: string): boolean {
   // Matches Claude 4.6 variants where prefill is not supported
   // Handles separators: -, ., _ between major.minor version
-  return /claude-(opus|sonnet)-4[\._-][67]/.test(modelID)
+  return /claude-(opus|sonnet)-4[._-][67]/.test(modelID)
 }
 
 // Returns true if a part carries meaningful content

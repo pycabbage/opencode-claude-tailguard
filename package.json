@@ -24,11 +24,14 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "lint": "biome check"
+    "lint": "biome check",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0"
   },
   "peerDependencies": {
     "typescript": "^6.0.3",
