@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { Message, Part } from "@opencode-ai/sdk"
 import type { MessageEntry } from "./transform"
 import {
+  findSurgicalCut,
   getMode,
   hasContent,
   isTargetModel,
@@ -30,7 +31,7 @@ function makeUserEntry(modelID = "claude-opus-4-6"): MessageEntry {
   }
 }
 
-function makeAssistantEntry(parts: Part[]): MessageEntry {
+function makeAssistantEntry(parts: Part[], finish?: string): MessageEntry {
   return {
     info: {
       role: "assistant",
@@ -42,6 +43,7 @@ function makeAssistantEntry(parts: Part[]): MessageEntry {
       mode: "chat",
       path: { cwd: "/", root: "/" },
       cost: 0,
+      ...(finish !== undefined ? { finish } : {}),
       tokens: {
         input: 0,
         output: 0,
@@ -51,6 +53,37 @@ function makeAssistantEntry(parts: Part[]): MessageEntry {
       time: { created: Date.now() },
     } as unknown as Message,
     parts,
+  }
+}
+
+function makeErrorAssistantEntry(): MessageEntry {
+  return {
+    info: {
+      role: "assistant",
+      id: nextId(),
+      sessionID: SESSION_ID,
+      parentID: nextId(),
+      modelID: "claude-opus-4-6",
+      providerID: "anthropic",
+      mode: "chat",
+      path: { cwd: "/", root: "/" },
+      cost: 0,
+      error: {
+        name: "APIError",
+        data: {
+          message: "This model does not support assistant message prefill.",
+          statusCode: 400,
+        },
+      },
+      tokens: {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cache: { read: 0, write: 0 },
+      },
+      time: { created: Date.now() },
+    } as unknown as Message,
+    parts: [],
   }
 }
 
@@ -122,18 +155,23 @@ function makeStepFinishPart(): Part {
 // ─── getMode ────────────────────────────────────────────────────────────────
 
 describe("getMode", () => {
-  test("defaults to removal when env var is unset", () => {
+  test("defaults to surgical when env var is unset", () => {
     delete process.env.OPENCODE_CLAUDE_TAILGUARD_MODE
-    expect(getMode()).toBe("removal")
+    expect(getMode()).toBe("surgical")
   })
   test("returns transform when env var is 'transform'", () => {
     process.env.OPENCODE_CLAUDE_TAILGUARD_MODE = "transform"
     expect(getMode()).toBe("transform")
     delete process.env.OPENCODE_CLAUDE_TAILGUARD_MODE
   })
-  test("returns removal for unknown value", () => {
-    process.env.OPENCODE_CLAUDE_TAILGUARD_MODE = "invalid"
+  test("returns removal when env var is 'removal'", () => {
+    process.env.OPENCODE_CLAUDE_TAILGUARD_MODE = "removal"
     expect(getMode()).toBe("removal")
+    delete process.env.OPENCODE_CLAUDE_TAILGUARD_MODE
+  })
+  test("returns surgical for unknown value", () => {
+    process.env.OPENCODE_CLAUDE_TAILGUARD_MODE = "invalid"
+    expect(getMode()).toBe("surgical")
     delete process.env.OPENCODE_CLAUDE_TAILGUARD_MODE
   })
 })
@@ -150,8 +188,55 @@ describe("isTargetModel", () => {
   test("matches claude-sonnet-4-6", () => {
     expect(isTargetModel("claude-sonnet-4-6")).toBe(true)
   })
-  test("matches claude-haiku-4-5", () => {
+  test("matches claude-opus-4-7", () => {
+    expect(isTargetModel("claude-opus-4-7")).toBe(true)
+  })
+  test("matches claude-sonnet-5 (bare major 5)", () => {
+    expect(isTargetModel("claude-sonnet-5")).toBe(true)
+  })
+  test("matches Bedrock global.anthropic.claude-sonnet-5", () => {
+    expect(isTargetModel("global.anthropic.claude-sonnet-5")).toBe(true)
+  })
+  test("matches Bedrock global.anthropic.claude-fable-5", () => {
+    expect(isTargetModel("global.anthropic.claude-fable-5")).toBe(true)
+  })
+  test("matches claude-sonnet-5-20260101", () => {
+    expect(isTargetModel("claude-sonnet-5-20260101")).toBe(true)
+  })
+  test("matches OpenRouter-style anthropic/claude-opus-4.6", () => {
+    expect(isTargetModel("anthropic/claude-opus-4.6")).toBe(true)
+  })
+  test("matches OpenRouter-style anthropic/claude-sonnet-5", () => {
+    expect(isTargetModel("anthropic/claude-sonnet-5")).toBe(true)
+  })
+  test("does not match OpenRouter-style anthropic/claude-sonnet-4.5", () => {
+    expect(isTargetModel("anthropic/claude-sonnet-4.5")).toBe(false)
+  })
+  test("matches first-party dated alias claude-opus-4-6-20260101", () => {
+    expect(isTargetModel("claude-opus-4-6-20260101")).toBe(true)
+  })
+  test("does not match first-party dated Claude 4.0 claude-sonnet-4-20250514", () => {
+    expect(isTargetModel("claude-sonnet-4-20250514")).toBe(false)
+  })
+  test("does not match first-party dated Claude 4.0 claude-opus-4-20250514", () => {
+    expect(isTargetModel("claude-opus-4-20250514")).toBe(false)
+  })
+  test("does not match first-party dated claude-sonnet-4-5-20250929", () => {
+    expect(isTargetModel("claude-sonnet-4-5-20250929")).toBe(false)
+  })
+  test("does not match Vertex legacy claude-3-7-sonnet@001", () => {
+    expect(isTargetModel("claude-3-7-sonnet@001")).toBe(false)
+  })
+  test("does not match unversioned-dated claude-sonnet-20260101", () => {
+    expect(isTargetModel("claude-sonnet-20260101")).toBe(false)
+  })
+  test("does not match claude-haiku-4-5", () => {
     expect(isTargetModel("claude-haiku-4-5")).toBe(false)
+  })
+  test("does not match Bedrock claude-haiku-4-5-20251001-v1:0", () => {
+    expect(
+      isTargetModel("global.anthropic.claude-haiku-4-5-20251001-v1:0")
+    ).toBe(false)
   })
   test("matches claude-sonnet-4.5", () => {
     expect(isTargetModel("claude-sonnet-4.5")).toBe(false)
@@ -159,8 +244,14 @@ describe("isTargetModel", () => {
   test("does not match claude-3-opus", () => {
     expect(isTargetModel("claude-3-opus")).toBe(false)
   })
+  test("does not match claude-3-7-sonnet", () => {
+    expect(isTargetModel("claude-3-7-sonnet")).toBe(false)
+  })
   test("does not match gpt-4", () => {
     expect(isTargetModel("gpt-4")).toBe(false)
+  })
+  test("does not match glm-5.3", () => {
+    expect(isTargetModel("z-ai/glm-5.3")).toBe(false)
   })
   test("does not match claude-opus-4-4", () => {
     expect(isTargetModel("claude-opus-4-4")).toBe(false)
@@ -188,7 +279,7 @@ describe("hasContent", () => {
     )
   })
   test("ReasoningPart with empty text and empty metadata returns false", () => {
-    expect(hasContent(makeReasoningPart("", {}))).toBe(false)
+    expect(hasContent(makeReasoningPart("", {})).valueOf()).toBe(false)
   })
   test("ToolPart always returns true", () => {
     expect(hasContent(makeToolPart())).toBe(true)
@@ -201,10 +292,81 @@ describe("hasContent", () => {
   })
 })
 
-// ─── transformMessages ──────────────────────────────────────────────────────
+// ─── findSurgicalCut ────────────────────────────────────────────────────────
+
+describe("findSurgicalCut", () => {
+  test("production bug shape [tool, step-start, text, step-finish] cuts at step-start", () => {
+    const parts = [
+      makeToolPart(),
+      makeStepStartPart(),
+      makeTextPart("narration"),
+      makeStepFinishPart(),
+    ]
+    expect(findSurgicalCut(parts)).toBe(1)
+  })
+  test("production bug shape [tool, step-start, text] cuts at step-start", () => {
+    const parts = [
+      makeToolPart(),
+      makeStepStartPart(),
+      makeTextPart("narration"),
+    ]
+    expect(findSurgicalCut(parts)).toBe(1)
+  })
+  test("production bug shape [tool, step-finish, step-start, text] cuts at step-start", () => {
+    const parts = [
+      makeToolPart(),
+      makeStepFinishPart(),
+      makeStepStartPart(),
+      makeTextPart("narration"),
+    ]
+    expect(findSurgicalCut(parts)).toBe(2)
+  })
+  test("valid outlier [step-start, reasoning, tool, step-finish, text] is not cut", () => {
+    const parts = [
+      makeStepStartPart(),
+      makeReasoningPart("hmm"),
+      makeToolPart(),
+      makeStepFinishPart(),
+      makeTextPart("answer"),
+    ]
+    expect(findSurgicalCut(parts)).toBeUndefined()
+  })
+  test("normal shape [step-start, text, tool, step-finish] is not cut", () => {
+    const parts = [
+      makeStepStartPart(),
+      makeTextPart("let me check"),
+      makeToolPart(),
+      makeStepFinishPart(),
+    ]
+    expect(findSurgicalCut(parts)).toBeUndefined()
+  })
+  test("single block [step-start, reasoning, tool, text] is not cut", () => {
+    const parts = [
+      makeStepStartPart(),
+      makeReasoningPart("hmm"),
+      makeToolPart(),
+      makeTextPart("answer"),
+    ]
+    expect(findSurgicalCut(parts)).toBeUndefined()
+  })
+  test("text-only message without tool is not cut", () => {
+    const parts = [makeStepStartPart(), makeTextPart("final answer")]
+    expect(findSurgicalCut(parts)).toBeUndefined()
+  })
+  test("trailing step-start without content after it is not cut", () => {
+    const parts = [makeStepStartPart(), makeToolPart(), makeStepStartPart()]
+    expect(findSurgicalCut(parts)).toBeUndefined()
+  })
+  test("trailing block with only step-finish (no content) is not cut", () => {
+    const parts = [makeToolPart(), makeStepStartPart(), makeStepFinishPart()]
+    expect(findSurgicalCut(parts)).toBeUndefined()
+  })
+})
+
+// ─── transformMessages (in-place contract) ──────────────────────────────────
 
 describe("transformMessages", () => {
-  test("empty array: no-op", () => {
+  test("empty array: no-op, same reference", () => {
     const messages: MessageEntry[] = []
     const result = transformMessages(messages)
     expect(result).toBe(messages)
@@ -228,124 +390,196 @@ describe("transformMessages", () => {
     expect(result).toHaveLength(2)
   })
 
+  test("non-target model claude-sonnet-4-5: no-op", () => {
+    const bug = makeAssistantEntry(
+      [makeToolPart(), makeStepStartPart(), makeTextPart("narration")],
+      "tool-calls"
+    )
+    const messages = [makeUserEntry("claude-sonnet-4-5"), bug]
+    transformMessages(messages)
+    expect(bug.parts).toHaveLength(3)
+  })
+
   test("no user message at all: no-op", () => {
     const messages = [makeAssistantEntry([makeTextPart("hello")])]
     const result = transformMessages(messages)
     expect(result).toBe(messages)
   })
+})
 
-  // Pattern 1: [U, A(text+thinking)] → [U, A(text+thinking), U("Continue.")]
-  test("pattern 1: content-bearing assistant → append Continue", () => {
-    const messages = [
-      makeUserEntry(),
-      makeAssistantEntry([
-        makeTextPart("hello"),
-        makeReasoningPart("thinking"),
-      ]),
-    ]
-    const result = transformMessages(messages, "transform")
-    expect(result).toHaveLength(3)
-    expect(result[2]?.info.role).toBe("user")
-    expect(result[2]?.parts[0]).toMatchObject({
-      type: "text",
-      text: "Continue.",
-    })
-    // Input array is not mutated
-    expect(messages).toHaveLength(2)
-    expect(result).not.toBe(messages)
-  })
+// ─── transformMessages (surgical mode - default) ────────────────────────────
 
-  // Pattern 2: [U, A(text+thinking), A(empty)] → [U, A(text+thinking), U("Continue.")]
-  test("pattern 2: empty assistant after content-bearing → remove empty + append Continue", () => {
-    const messages = [
-      makeUserEntry(),
-      makeAssistantEntry([
-        makeTextPart("hello"),
-        makeReasoningPart("thinking"),
-      ]),
-      makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
-    ]
-    const result = transformMessages(messages, "transform")
-    expect(result).toHaveLength(3)
-    expect(result[1]?.parts).toHaveLength(2)
-    expect(result[2]?.info.role).toBe("user")
-    expect(result[2]?.parts[0]).toMatchObject({
-      type: "text",
-      text: "Continue.",
-    })
-    // Input array is not mutated
-    expect(messages).toHaveLength(3)
-    expect(result).not.toBe(messages)
-  })
-
-  // Pattern 3: [U, A(empty)] → [U]
-  test("pattern 3: single empty assistant → remove only", () => {
-    const messages = [
-      makeUserEntry(),
-      makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
-    ]
+describe("transformMessages (surgical mode - default)", () => {
+  test("bug shape: trailing [step-start, text] block removed in place, tool kept", () => {
+    const earlier = makeAssistantEntry(
+      [
+        makeStepStartPart(),
+        makeTextPart("working"),
+        makeToolPart(),
+        makeStepFinishPart(),
+      ],
+      "tool-calls"
+    )
+    const bug = makeAssistantEntry(
+      [
+        makeToolPart(),
+        makeStepStartPart(),
+        makeTextPart("All files exist. Let me re-run."),
+        makeStepFinishPart(),
+      ],
+      "tool-calls"
+    )
+    const messages = [makeUserEntry(), earlier, bug]
     const result = transformMessages(messages)
-    expect(result).toHaveLength(1)
-    expect(result[0]?.info.role).toBe("user")
-    // Input array is not mutated
-    expect(messages).toHaveLength(2)
-    expect(result).not.toBe(messages)
+    expect(result).toBe(messages)
+    expect(messages).toHaveLength(3)
+    // earlier message untouched
+    expect(earlier.parts).toHaveLength(4)
+    // bug message truncated right after the tool part
+    expect(bug.parts).toHaveLength(1)
+    expect(bug.parts[0]?.type).toBe("tool")
   })
 
-  // Pattern 4: [U, A(empty), A(empty)] → [U]
-  test("pattern 4: multiple empty assistants → remove all", () => {
+  test("retry scenario: error assistant tail is skipped, bug message beneath is fixed", () => {
+    const bug = makeAssistantEntry(
+      [
+        makeToolPart(),
+        makeStepStartPart(),
+        makeTextPart("narration"),
+        makeStepFinishPart(),
+      ],
+      "tool-calls"
+    )
+    const errorTail = makeErrorAssistantEntry()
+    const messages = [makeUserEntry(), bug, errorTail]
+    transformMessages(messages)
+    // error tail left in place (OpenCode drops it), bug message fixed
+    expect(messages).toHaveLength(3)
+    expect(bug.parts).toHaveLength(1)
+  })
+
+  test("empty assistant tail is skipped, bug message beneath is fixed", () => {
+    const bug = makeAssistantEntry(
+      [makeToolPart(), makeStepStartPart(), makeTextPart("narration")],
+      "tool-calls"
+    )
+    const emptyTail = makeAssistantEntry([
+      makeStepStartPart(),
+      makeStepFinishPart(),
+    ])
+    const messages = [makeUserEntry(), bug, emptyTail]
+    transformMessages(messages)
+    expect(messages).toHaveLength(3)
+    expect(bug.parts).toHaveLength(1)
+  })
+
+  test("valid tail (text after step-finish, same block) is untouched", () => {
+    const valid = makeAssistantEntry(
+      [
+        makeStepStartPart(),
+        makeReasoningPart("hmm"),
+        makeToolPart(),
+        makeStepFinishPart(),
+        makeTextPart("answer"),
+      ],
+      "tool-calls"
+    )
+    const messages = [makeUserEntry(), valid]
+    transformMessages(messages)
+    expect(valid.parts).toHaveLength(5)
+  })
+
+  test("genuine end-turn text-only tail is untouched (no runaway trigger)", () => {
+    const done = makeAssistantEntry(
+      [makeStepStartPart(), makeTextPart("All done. Final report...")],
+      "stop"
+    )
+    const messages = [makeUserEntry(), done]
+    transformMessages(messages)
+    expect(messages).toHaveLength(2)
+    expect(done.parts).toHaveLength(2)
+  })
+
+  test("Bedrock claude-sonnet-5 model id is targeted", () => {
+    const bug = makeAssistantEntry(
+      [makeToolPart(), makeStepStartPart(), makeTextPart("narration")],
+      "tool-calls"
+    )
+    const messages = [makeUserEntry("global.anthropic.claude-sonnet-5"), bug]
+    transformMessages(messages)
+    expect(bug.parts).toHaveLength(1)
+  })
+})
+
+// ─── transformMessages (removal mode - legacy) ──────────────────────────────
+
+describe("transformMessages (removal mode - legacy)", () => {
+  test("content-bearing assistant → removed in place", () => {
+    const messages = [
+      makeUserEntry(),
+      makeAssistantEntry([makeTextPart("hello")]),
+    ]
+    const result = transformMessages(messages, "removal")
+    expect(result).toBe(messages)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
+  })
+
+  test("multiple empty assistants → all removed in place", () => {
     const messages = [
       makeUserEntry(),
       makeAssistantEntry([makeStepStartPart()]),
       makeAssistantEntry([makeStepFinishPart()]),
     ]
-    const result = transformMessages(messages)
-    expect(result).toHaveLength(1)
-    expect(result[0]?.info.role).toBe("user")
-    // Input array is not mutated
+    transformMessages(messages, "removal")
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
+  })
+})
+
+// ─── transformMessages (transform mode - legacy) ────────────────────────────
+
+describe("transformMessages (transform mode - legacy)", () => {
+  test("mid-loop assistant (finish=tool-calls) → synthetic Continue. appended in place", () => {
+    const messages = [
+      makeUserEntry(),
+      makeAssistantEntry(
+        [makeTextPart("hello"), makeReasoningPart("thinking")],
+        "tool-calls"
+      ),
+    ]
+    const result = transformMessages(messages, "transform")
+    expect(result).toBe(messages)
     expect(messages).toHaveLength(3)
-    expect(result).not.toBe(messages)
-  })
-
-  // Pattern 5: [U, A(reasoning with signature, text="")] → [U, A, U("Continue.")]
-  test("pattern 5: signed reasoning with empty text → preserve assistant + append Continue", () => {
-    const messages = [
-      makeUserEntry(),
-      makeAssistantEntry([makeReasoningPart("", { signature: "abc123" })]),
-    ]
-    const result = transformMessages(messages, "transform")
-    expect(result).toHaveLength(3)
-    expect(result[1]?.info.role).toBe("assistant")
-    expect(result[2]?.info.role).toBe("user")
-    expect(result[2]?.parts[0]).toMatchObject({
+    expect(messages[2]?.info.role).toBe("user")
+    expect(messages[2]?.parts[0]).toMatchObject({
       type: "text",
       text: "Continue.",
     })
-    // Input array is not mutated
-    expect(messages).toHaveLength(2)
-    expect(result).not.toBe(messages)
   })
 
-  // Pattern 6: [U, A(tool+thinking)] → [U, A(tool+thinking), U("Continue.")]
-  test("pattern 6: assistant with tool + reasoning → append Continue", () => {
+  test("genuine end turn (finish=stop) → tail dropped, no Continue. (runaway fix)", () => {
     const messages = [
       makeUserEntry(),
-      makeAssistantEntry([makeToolPart(), makeReasoningPart("thinking")]),
+      makeAssistantEntry([makeTextPart("final answer")], "stop"),
     ]
-    const result = transformMessages(messages, "transform")
-    expect(result).toHaveLength(3)
-    expect(result[2]?.info.role).toBe("user")
-    expect(result[2]?.parts[0]).toMatchObject({
-      type: "text",
-      text: "Continue.",
-    })
-    // Input array is not mutated
-    expect(messages).toHaveLength(2)
-    expect(result).not.toBe(messages)
+    transformMessages(messages, "transform")
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
+  })
+
+  test("single empty assistant → removed only", () => {
+    const messages = [
+      makeUserEntry(),
+      makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
+    ]
+    transformMessages(messages, "transform")
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.info.role).toBe("user")
   })
 
   test("synthetic message sessionID matches last assistant", () => {
-    const assistant = makeAssistantEntry([makeTextPart("hello")])
+    const assistant = makeAssistantEntry([makeTextPart("hello")], "tool-calls")
     const messages = [makeUserEntry(), assistant]
     const assistantSessionID = assistant.info.sessionID
     const result = transformMessages(messages, "transform")
@@ -353,93 +587,29 @@ describe("transformMessages", () => {
   })
 
   test("synthetic message agent and model come from latest user message", () => {
-    const user = makeUserEntry("claude-sonnet-4-6")
-    const messages = [user, makeAssistantEntry([makeTextPart("hello")])]
+    const user = makeUserEntry("claude-sonnet-5")
+    const messages = [
+      user,
+      makeAssistantEntry([makeTextPart("hello")], "tool-calls"),
+    ]
     const result = transformMessages(messages, "transform")
     const synthetic = result[2]?.info as {
       agent: string
       model: { modelID: string }
     }
     expect(synthetic.agent).toBe(AGENT)
-    expect(synthetic.model.modelID).toBe("claude-sonnet-4-6")
+    expect(synthetic.model.modelID).toBe("claude-sonnet-5")
   })
 
   test("synthetic text part has messageID matching synthetic message id", () => {
     const messages = [
       makeUserEntry(),
-      makeAssistantEntry([makeTextPart("hello")]),
+      makeAssistantEntry([makeTextPart("hello")], "tool-calls"),
     ]
     const result = transformMessages(messages, "transform")
     expect(result).toHaveLength(3)
     const syntheticMsg = result[2] as MessageEntry
     const syntheticPart = syntheticMsg.parts[0] as { messageID: string }
     expect(syntheticPart.messageID).toBe(syntheticMsg.info.id)
-  })
-})
-
-// ─── transformMessages (removal mode) ───────────────────────────────────────
-
-describe("transformMessages (removal mode - default)", () => {
-  test("content-bearing assistant → removed", () => {
-    const messages = [
-      makeUserEntry(),
-      makeAssistantEntry([makeTextPart("hello")]),
-    ]
-    const result = transformMessages(messages)
-    expect(result).toHaveLength(1)
-    expect(result[0]?.info.role).toBe("user")
-    // Input array is not mutated
-    expect(messages).toHaveLength(2)
-    expect(result).not.toBe(messages)
-  })
-
-  test("empty assistant → removed", () => {
-    const messages = [
-      makeUserEntry(),
-      makeAssistantEntry([makeStepStartPart(), makeStepFinishPart()]),
-    ]
-    const result = transformMessages(messages)
-    expect(result).toHaveLength(1)
-    expect(result[0]?.info.role).toBe("user")
-    // Input array is not mutated
-    expect(messages).toHaveLength(2)
-    expect(result).not.toBe(messages)
-  })
-
-  test("content-bearing and empty assistants → all removed", () => {
-    const messages = [
-      makeUserEntry(),
-      makeAssistantEntry([makeTextPart("hello")]),
-      makeAssistantEntry([makeStepStartPart()]),
-    ]
-    const result = transformMessages(messages)
-    expect(result).toHaveLength(1)
-    expect(result[0]?.info.role).toBe("user")
-    // Input array is not mutated
-    expect(messages).toHaveLength(3)
-    expect(result).not.toBe(messages)
-  })
-
-  test("assistant with signed reasoning → removed", () => {
-    const messages = [
-      makeUserEntry(),
-      makeAssistantEntry([makeReasoningPart("", { signature: "abc123" })]),
-    ]
-    const result = transformMessages(messages)
-    expect(result).toHaveLength(1)
-    expect(result[0]?.info.role).toBe("user")
-    // Input array is not mutated
-    expect(messages).toHaveLength(2)
-    expect(result).not.toBe(messages)
-  })
-
-  test("assistant with tool part → removed", () => {
-    const messages = [makeUserEntry(), makeAssistantEntry([makeToolPart()])]
-    const result = transformMessages(messages)
-    expect(result).toHaveLength(1)
-    expect(result[0]?.info.role).toBe("user")
-    // Input array is not mutated
-    expect(messages).toHaveLength(2)
-    expect(result).not.toBe(messages)
   })
 })

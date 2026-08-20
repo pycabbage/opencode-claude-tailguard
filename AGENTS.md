@@ -32,23 +32,37 @@ src/
 
 ### Transformation Logic (`transform.ts`)
 
-Target models: `/claude-(opus|sonnet)-4[._-]6/` — Claude 4.6 Opus and Sonnet only.
+Target models: any Claude model with version >= 4.6, regardless of variant name (Opus, Sonnet, Haiku, Fable, ...), naming scheme, or provider. `isTargetModel` is purely model-ID-based (the provider ID is never consulted) and parses only the major/minor version with bounded digits — e.g. `claude-opus-4.6`, `claude-sonnet-5`, `global.anthropic.claude-fable-5` (Bedrock), `claude-opus-4-6-20260101` (first-party dated), `anthropic/claude-opus-4.6` (OpenRouter) all match. Dated Claude-4.0 aliases (`claude-sonnet-4-20250514`) must NOT match — version digits are capped at two and may not be followed by another digit. `claude-haiku-4-5` and non-Claude models still allow prefill and are skipped.
 
 **Mode (`OPENCODE_CLAUDE_TAILGUARD_MODE`):**
 
 | Value | Behavior |
 |---|---|
-| `removal` (default) | Remove **all** trailing assistant messages regardless of content |
-| `transform` | Remove empty trailing assistants; append synthetic `"Continue."` if content-bearing assistant remains |
+| `surgical` (default) | Truncate the trailing `step-start + text` block of the last API-visible assistant message (bug shape `[tool, ..., step-start, text]`) so the request ends with `tool(result)` |
+| `removal` (legacy) | Remove **all** trailing assistant messages (in agent loops this can strip nearly the whole conversation) |
+| `transform` (legacy) | Remove trailing empty/errored assistants; append synthetic `"Continue."` only when the tail has `finish === "tool-calls"`; genuine end turns (`finish === "stop"`) are dropped |
 
 **`transformMessages(messages, mode)` algorithm:**
 
-Returns a new `MessageEntry[]` array; input array is never mutated.
+MUTATES the input array (and its entries) IN PLACE and returns the same
+reference. OpenCode (~1.3+) fires `experimental.chat.messages.transform` and
+keeps using its own `messages` reference, discarding the trigger's return
+value — rebinding `output.messages` is silently ignored, so only in-place
+mutations reach the LLM request. Never return a new array from this function.
 
-1. No-op if last message is not `role === "assistant"` (returns same reference)
-2. No-op if latest user message is not a target model (returns same reference)
-3. `removal`: slice off all trailing assistant messages (content-bearing or empty)
-   `transform`: slice off empty trailing assistants; if still ends with assistant, spread a synthetic user message onto the result
+1. No-op if last message is not `role === "assistant"`
+2. No-op if latest user message is not a target model
+3. Walk back past assistant entries OpenCode itself drops (`info.error` set, or no content parts); the first content-bearing, error-free assistant is the last message the API will see
+4. `surgical`: cut its parts at the trailing `step-start` when the final block has content but no tool part (`findSurgicalCut`)
+   `removal`: splice off all trailing assistant messages
+   `transform`: splice off dropped-by-OpenCode tails, then append `"Continue."` (mid-loop) or drop the tail entry (end turn)
+
+**Surgical cut rule (`findSurgicalCut`):** return the index of the last
+`step-start` iff (a) the message contains a `tool` part, (b) that `step-start`
+sits after the last `tool` part, and (c) the block following it carries content
+(text/reasoning) but no `tool` part. Valid shapes — e.g. `[step-start,
+reasoning, tool, step-finish, text]` (single block, no split) or
+`[step-start, text, tool, step-finish]` — are left untouched.
 
 **Part content classification (`hasContent`):**
 
